@@ -1,0 +1,15 @@
+D:\teamHacker\AntiAway\bin\Release\net8.0-windows\AntiAway.exe
+D:\teamHacker\AntiAway\bin\Release\net8.0-windows\AntiAway.deps.json
+D:\teamHacker\AntiAway\bin\Release\net8.0-windows\AntiAway.runtimeconfig.json
+D:\teamHacker\AntiAway\bin\Release\net8.0-windows\AntiAway.dll
+D:\teamHacker\AntiAway\bin\Release\net8.0-windows\AntiAway.pdb
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\AntiAway.GeneratedMSBuildEditorConfig.editorconfig
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\AntiAway.AssemblyInfoInputs.cache
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\AntiAway.AssemblyInfo.cs
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\AntiAway.csproj.CoreCompileInputs.cache
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\AntiAway.sourcelink.json
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\AntiAway.dll
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\refint\AntiAway.dll
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\AntiAway.pdb
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\AntiAway.genruntimeconfig.cache
+D:\teamHacker\AntiAway\obj\Release\net8.0-windows\ref\AntiAway.dll
