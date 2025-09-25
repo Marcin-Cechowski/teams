@@ -1,0 +1,1 @@
+Start-Process -FilePath dotnet -ArgumentList ".\bin\Release\net8.0-windows\AntiAway.dll --mode=sequence --interval=3s --idle-threshold=0 --actions=1 --mouse-on --mouse-interval=2s --mouse-pixels=400 --mouse-random=true"
