@@ -18,19 +18,16 @@ internal static class Program
 	private static extern ExecutionState SetThreadExecutionState(ExecutionState esFlags);
 
 	[DllImport("user32.dll")]
-	private static extern bool GetCursorPos(out POINT lpPoint);
-
-	[DllImport("user32.dll")]
-	private static extern bool SetCursorPos(int X, int Y);
-
-	[DllImport("user32.dll")]
 	private static extern uint SendInput(uint nInputs, [In] INPUT[] pInputs, int cbSize);
 
+	[DllImport("user32.dll")]
+	private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
 	[StructLayout(LayoutKind.Sequential)]
-	private struct POINT
+	private struct LASTINPUTINFO
 	{
-		public int X;
-		public int Y;
+		public uint cbSize;
+		public uint dwTime;
 	}
 
 	[StructLayout(LayoutKind.Sequential)]
@@ -71,6 +68,7 @@ internal static class Program
 	private const uint INPUT_MOUSE = 0;
 	private const uint INPUT_KEYBOARD = 1;
 	private const uint MOUSEEVENTF_MOVE = 0x0001;
+	private const uint MOUSEEVENTF_MOVE_NOCOALESCE = 0x2000;
 	private const uint KEYEVENTF_KEYUP = 0x0002;
 	private const ushort VK_SHIFT = 0x10;
 
@@ -84,8 +82,9 @@ internal static class Program
 	private sealed class Config
 	{
 		public Mode RunMode { get; init; } = Mode.ExecutionStateOnly;
-		public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(2);
-		public int JigglePixels { get; init; } = 2;
+		public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
+		public int JigglePixels { get; init; } = 1;
+		public TimeSpan IdleThreshold { get; init; } = TimeSpan.FromSeconds(60);
 	}
 
 	private static volatile bool _isStopping;
@@ -108,7 +107,7 @@ internal static class Program
 				ExecutionState.EsSystemRequired |
 				ExecutionState.EsDisplayRequired);
 
-			Console.WriteLine($"AntiAway started. Mode={config.RunMode}, Interval={config.Interval}, JigglePixels={config.JigglePixels}");
+			Console.WriteLine($"AntiAway started. Mode={config.RunMode}, Interval={config.Interval}, IdleThreshold={config.IdleThreshold}, JigglePixels={config.JigglePixels}");
 			Console.WriteLine("Press Ctrl+C to stop.");
 
 			var next = DateTime.UtcNow;
@@ -117,7 +116,20 @@ internal static class Program
 				var now = DateTime.UtcNow;
 				if (now >= next)
 				{
-					PerformAction(config);
+					var idle = GetIdleDuration();
+					if (idle >= config.IdleThreshold)
+					{
+						PerformAction(config);
+					}
+					else if (config.RunMode == Mode.ExecutionStateOnly)
+					{
+						// Refresh execution state periodically even if user is active
+						SetThreadExecutionState(
+							ExecutionState.EsContinuous |
+							ExecutionState.EsSystemRequired |
+							ExecutionState.EsDisplayRequired);
+					}
+
 					next = now.Add(config.Interval);
 				}
 
@@ -138,12 +150,21 @@ internal static class Program
 		}
 	}
 
+	private static TimeSpan GetIdleDuration()
+	{
+		var lii = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf<LASTINPUTINFO>() };
+		if (!GetLastInputInfo(ref lii)) return TimeSpan.Zero;
+		uint last = lii.dwTime;
+		uint now = (uint)Environment.TickCount;
+		uint elapsed = now - last; // uint arithmetic handles wraparound
+		return TimeSpan.FromMilliseconds(elapsed);
+	}
+
 	private static void PerformAction(Config config)
 	{
 		switch (config.RunMode)
 		{
 			case Mode.ExecutionStateOnly:
-				// Refresh the request to be safe (though EsContinuous holds it)
 				SetThreadExecutionState(
 					ExecutionState.EsContinuous |
 					ExecutionState.EsSystemRequired |
@@ -160,15 +181,8 @@ internal static class Program
 
 	private static void JiggleMouse(int pixels)
 	{
-		if (!GetCursorPos(out var pt)) return;
-		var x1 = pt.X + pixels;
-		var y1 = pt.Y;
-		SetCursorPos(x1, y1);
-		Thread.Sleep(20);
-		SetCursorPos(pt.X, pt.Y);
-
-		// Also send a minimal mouse move event to ensure input is registered
-		var inputs = new INPUT[1];
+		if (pixels < 1) pixels = 1;
+		var inputs = new INPUT[2];
 		inputs[0] = new INPUT
 		{
 			type = INPUT_MOUSE,
@@ -176,16 +190,32 @@ internal static class Program
 			{
 				mi = new MOUSEINPUT
 				{
-					dx = 0,
+					dx = pixels,
 					dy = 0,
 					mouseData = 0,
-					dwFlags = MOUSEEVENTF_MOVE,
+					dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE,
 					time = 0,
 					dwExtraInfo = 0
 				}
 			}
 		};
-		SendInput(1, inputs, Marshal.SizeOf<INPUT>());
+		inputs[1] = new INPUT
+		{
+			type = INPUT_MOUSE,
+			U = new InputUnion
+			{
+				mi = new MOUSEINPUT
+				{
+					dx = -pixels,
+					dy = 0,
+					mouseData = 0,
+					dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE,
+					time = 0,
+					dwExtraInfo = 0
+				}
+			}
+		};
+		SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
 	}
 
 	private static void TapShiftKey()
@@ -231,8 +261,9 @@ internal static class Program
 		if (args.Length == 0) return new Config();
 
 		var mode = Mode.ExecutionStateOnly;
-		var interval = TimeSpan.FromMinutes(2);
-		var jiggle = 2;
+		var interval = TimeSpan.FromSeconds(30);
+		var jiggle = 1;
+		var idle = TimeSpan.FromSeconds(60);
 
 		foreach (var raw in args)
 		{
@@ -260,12 +291,16 @@ internal static class Program
 					if (!int.TryParse(value, out jiggle) || jiggle < 1 || jiggle > 20)
 						throw new ArgumentException("--jiggle-pixels must be 1-20");
 					break;
+				case "--idle-threshold":
+					if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("--idle-threshold requires seconds or timespan");
+					idle = ParseInterval(value);
+					break;
 				default:
 					throw new ArgumentException($"Unknown argument: {raw}");
 			}
 		}
 
-		return new Config { RunMode = mode, Interval = interval, JigglePixels = jiggle };
+		return new Config { RunMode = mode, Interval = interval, JigglePixels = jiggle, IdleThreshold = idle };
 	}
 
 	private static (string key, string? value) SplitArg(string raw)
@@ -302,14 +337,15 @@ internal static class Program
 		sb.AppendLine("AntiAway - prevent Teams idle/away status by keeping system awake and optionally simulating minimal input.");
 		sb.AppendLine();
 		sb.AppendLine("Usage:");
-		sb.AppendLine("  AntiAway [--mode=es|mouse|key] [--interval=VALUE] [--jiggle-pixels=N]");
+		sb.AppendLine("  AntiAway [--mode=es|mouse|key] [--interval=VALUE] [--idle-threshold=VALUE] [--jiggle-pixels=N]");
 		sb.AppendLine();
 		sb.AppendLine("Options:");
 		sb.AppendLine("  --mode=es       Use Windows execution state only (default)");
-		sb.AppendLine("  --mode=mouse    Subtle mouse jiggle every interval");
+		sb.AppendLine("  --mode=mouse    Subtle mouse jiggle every interval (relative, no cursor jump)");
 		sb.AppendLine("  --mode=key      Tap SHIFT key every interval");
-		sb.AppendLine("  --interval=120  Interval in seconds, timespan (00:02:00), or suffix (90s, 5m)");
-		sb.AppendLine("  --jiggle-pixels N  Pixels to move mouse (1-20), default 2");
+		sb.AppendLine("  --interval=30s  Interval in seconds, timespan (00:00:30), or suffix (90s, 5m)");
+		sb.AppendLine("  --idle-threshold=60s  Only act if user idle exceeds this duration");
+		sb.AppendLine("  --jiggle-pixels N  Pixels to move mouse (1-20), default 1");
 		sb.AppendLine("  -h, --help      Show help");
 		Console.WriteLine(sb.ToString());
 		Environment.Exit(0);
